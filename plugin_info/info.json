@@ -1,0 +1,49 @@
+{
+    "id": "sfrhome",
+    "name": "SFR Home",
+    "pluginVersion": "0.1.0",
+    "specialAttributes": {},
+    "description": {
+        "fr_FR": "Plugin pour contrôler les équipements SFR Home",
+        "en_US": "Plugin to control SFR Home equipment"
+    },
+    "licence": "AGPL",
+    "author": "sdiraimondo",
+    "require": "4.2",
+    "os": {
+        "min": 10,
+        "max": 12.99
+    },
+    "category": "security",
+    "hasDependency": false,
+    "hasOwnDeamon": false,
+    "maxDependancyInstallTime": 0,
+    "changelog_beta": "https://doc.jeedom.com/plugins/programming/template/beta/#language#/changelog",
+    "documentation_beta": "https://doc.jeedom.com/plugins/programming/template/beta/#language#/",
+    "changelog": "https://doc.jeedom.com/plugins/programming/template/#language#/changelog",
+    "documentation": "https://doc.jeedom.com/plugins/programming/template/#language#/",
+    "link": {
+        "forum": "Lien vers le forum",
+        "video": "Lien vers une video"
+    },
+    "language": [
+        "fr_FR",
+        "en_US",
+        "es_ES",
+        "de_DE",
+        "ru_RU",
+        "id_ID",
+        "it_IT",
+        "ja_JP",
+        "pt_PT"
+    ],
+    "compatibility": [
+        "smart",
+        "luna",
+        "atlas",
+        "rpi",
+        "docker",
+        "diy",
+        "mobile"
+    ]
+}
