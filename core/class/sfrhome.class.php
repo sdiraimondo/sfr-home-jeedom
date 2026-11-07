@@ -163,9 +163,13 @@ class sfrhome extends eqLogic {
                 $eqLogic->createCmds($device);
                 log::add('sfrhome', 'info', __('Nouveau périphérique créé : ', __FILE__) . $device['name'] . ' (' . $device['deviceType'] . ')');
             } else {
-                $eqLogic->setConfiguration('deviceType', $device['deviceType']);
-                $eqLogic->setConfiguration('model', isset($device['model_type']) ? $device['model_type'] : '');
-                $eqLogic->save();
+                $changed = ($eqLogic->getConfiguration('deviceType') !== $device['deviceType'])
+                    || ($eqLogic->getConfiguration('model') !== (isset($device['model_type']) ? $device['model_type'] : ''));
+                if ($changed) {
+                    $eqLogic->setConfiguration('deviceType', $device['deviceType']);
+                    $eqLogic->setConfiguration('model', isset($device['model_type']) ? $device['model_type'] : '');
+                    $eqLogic->save();
+                }
                 $eqLogic->createCmds($device);
             }
             $eqLogic->updateCmds($device);
