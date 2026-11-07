@@ -1,18 +1,38 @@
-# Plugin template
+# Plugin SFR Home
 
-Ce "template de plugin" sert de base à la réalisation de plugins pour **Jeedom**.
+Ce plugin permet de connecter et contrôler les équipements SFR Home dans Jeedom.
 
-La documentation générale relative à la conception de plugin est consultable [ici](https://doc.jeedom.com/fr_FR/dev/).
+## Fonctionnalités
 
-Dans le détail :   
-* [Utilisation du template de plugin](https://doc.jeedom.com/fr_FR/dev/plugin_template) : Le template de plugin est une base de plugin pour Jeedom qui doit être adaptée avec l'id de votre plugin et à laquelle il suffit d'ajouter vos propres fonctions.
+- Découverte automatique des équipements SFR Home
+- Mise à jour automatique des états (fréquence configurable)
+- Contrôle des prises connectées
+- Gestion de la centrale d'alarme
+- Capteurs (ouverture, mouvement, fumée, température/humidité)
+- Volets roulants
+- Lumières
+- Caméras SFR Home
 
-* [Fichier info.json](https://doc.jeedom.com/fr_FR/dev/structure_info_json) : Intégré depuis la version 3.0 de Jeedom, le fichier **info.json** est obligatoire pour le bon fonctionnement des plugins et leur bon déploiement sur le Market Jeedom.
+## Configuration
 
-* [Icône du plugin](https://doc.jeedom.com/fr_FR/dev/Icone_de_plugin) : Afin de pouvoir être publié sur le Market Jeedom, tout plugin doit disposer d’une icône. Attention à ne pas utiliser le même code couleur que les icônes des plugins Jeedom officiels.
+1. Installer et activer le plugin.
+2. Aller dans **Plugins → SFR Home → Configuration**.
+3. Renseigner l'identifiant et le mot de passe SFR.
+4. Cliquer sur **Tester la connexion** pour vérifier immédiatement les identifiants.
+5. Cliquer sur **Sauvegarder**, puis sur **Synchroniser les périphériques**.
 
-* [Widget du plugin](https://doc.jeedom.com/fr_FR/dev/widget_plugin) : Présentation des différentes manières d'inclure des widgets personnalisés au plugin.
+Les équipements sont ensuite créés automatiquement dans **Plugins → SFR Home**.
+La synchronisation automatique tourne chaque minute et ne récupère les données
+SFR Home que si la fréquence de rafraîchissement configurée est écoulée.
 
-* [Documentation du plugin](https://doc.jeedom.com/fr_FR/dev/documentation_plugin) : Présentation de la mise en place d'une documentation car un bon plugin n'est rien sans documentation adéquate.
+## Authentification
 
-* [Publication du plugin](https://doc.jeedom.com/fr_FR/dev/publication_plugin) : Description des pré-requis indispensables à la publication du plugin.
+Le plugin utilise le même système d'authentification SSO que l'application SFR Home,
+avec gestion et renouvellement automatique des cookies de session.
+
+## Dépannage
+
+- Vérifier les logs dans **Analyse → Logs → sfrhome**.
+- Si l'authentification échoue, supprimer le fichier de cookies
+  (par défaut `/tmp/sfrhome_session_cookies.json`) puis relancer un test.
+- PHP avec les extensions `curl` et `SimpleXML` est requis.

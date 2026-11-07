@@ -1,30 +1,17 @@
-# Changelog plugin template
+# Changelog plugin SFR Home
 
->**IMPORTANT**
->
->S'il n'y a pas d'information sur la mise à jour, c'est que celle-ci concerne uniquement de la mise à jour de documentation, de traduction ou de texte.
+# 07/11/2026 - 0.2.0
 
-# 19/01/2022
+- Rafraîchissement automatique fiable des états (synchronisation globale selon la fréquence configurée)
+- Ajout du bouton **Tester la connexion** dans la configuration
+- Le test utilise les identifiants saisis, même avant sauvegarde
+- Renouvellement automatique de la session lors des commandes (403)
+- Parseur XML `/mysensors` plus robuste (structures attributs/éléments)
+- Nettoyage des fichiers résiduels du template Jeedom
 
-- Optimisations V4.2
+# 06/11/2026 - 0.1.0
 
-# 20/11/2020
-
-- Présentation officielle V4
-- Ajouts d'éléments d'informations et de paramètres pour les commandes
-
-# 16/11/2020
-
-- version minimale Jeedom: 3.3.39 (dernière MAJ critique)
-
-# 04/11/2020
-
-- Nouvelle présentation de la liste des objets
-
-# 07/08/2020
-
-- Ajout de commentaires
-
-# 17/05/2020
-
-- Mise à jour de la documentation
+- Version initiale du plugin
+- Découverte automatique des équipements
+- Contrôle des prises, volets, lumières et de l'alarme
+- Capteurs de température/humidité, ouverture, mouvement et fumée

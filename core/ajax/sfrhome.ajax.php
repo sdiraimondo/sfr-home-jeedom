@@ -11,8 +11,19 @@ try {
     ajax::init();
 
     if (init('action') == 'sync') {
-        sfrhome::syncDevices();
-        ajax::success();
+        $result = sfrhome::syncDevices();
+        if (empty($result['ok'])) {
+            ajax::error($result['message']);
+        }
+        ajax::success($result);
+    }
+
+    if (init('action') == 'test') {
+        ajax::success(sfrhome::testConnection(
+            init('username'),
+            init('password'),
+            init('cookiePath')
+        ));
     }
 
     throw new Exception(__('Aucune méthode correspondante à', __FILE__) . ' : ' . init('action'));

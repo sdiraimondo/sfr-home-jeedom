@@ -1,11 +1,10 @@
 {
     "id": "sfrhome",
     "name": "SFR Home",
-    "pluginVersion": "0.1.0",
-    "specialAttributes": {},
+    "pluginVersion": "0.2.0",
     "description": {
-        "fr_FR": "Plugin pour contrôler les équipements SFR Home",
-        "en_US": "Plugin to control SFR Home equipment"
+        "fr_FR": "Plugin pour connecter et contrôler les équipements SFR Home dans Jeedom",
+        "en_US": "Plugin to connect and control SFR Home devices in Jeedom"
     },
     "licence": "AGPL",
     "author": "sdiraimondo",
@@ -18,24 +17,10 @@
     "hasDependency": false,
     "hasOwnDeamon": false,
     "maxDependancyInstallTime": 0,
-    "changelog_beta": "https://doc.jeedom.com/plugins/programming/template/beta/#language#/changelog",
-    "documentation_beta": "https://doc.jeedom.com/plugins/programming/template/beta/#language#/",
-    "changelog": "https://doc.jeedom.com/plugins/programming/template/#language#/changelog",
-    "documentation": "https://doc.jeedom.com/plugins/programming/template/#language#/",
-    "link": {
-        "forum": "Lien vers le forum",
-        "video": "Lien vers une video"
-    },
+    "changelog": "https://github.com/sdiraimondo/sfr-home-jeedom/blob/main/README.md",
+    "documentation": "https://github.com/sdiraimondo/sfr-home-jeedom#readme",
     "language": [
-        "fr_FR",
-        "en_US",
-        "es_ES",
-        "de_DE",
-        "ru_RU",
-        "id_ID",
-        "it_IT",
-        "ja_JP",
-        "pt_PT"
+        "fr_FR"
     ],
     "compatibility": [
         "smart",
