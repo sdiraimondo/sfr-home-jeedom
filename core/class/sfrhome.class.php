@@ -12,48 +12,11 @@ class sfrhome extends eqLogic {
         self::cron();
     }
 
-    public static function deamon_info() {
-        $return = array();
-        $return['log'] = 'sfrhome';
-        $return['state'] = 'ok';
-        $return['launchable'] = 'ok';
-        $return['launchable_message'] = '';
-        return $return;
+    public static function cron15() {
+        self::syncDevices();
     }
 
-    public static function deamon_start() {
-        self::deamon_stop();
-        $deamon_info = self::deamon_info();
-        if ($deamon_info['launchable'] != 'ok') {
-            throw new Exception(__('Veuillez vérifier la configuration', __FILE__) . ' - ' . $deamon_info['launchable_message']);
-        }
-        $cmd = 'php ' . dirname(__FILE__) . '/../../resources/sfrhomed/sfrhomed.php';
-        $cmd .= ' >> ' . log::getPathToLog('sfrhome') . ' 2>&1 &';
-        exec($cmd);
-    }
-
-    public static function deamon_stop() {
-        $pid_file = jeedom::getTmpFolder('sfrhome') . '/sfrhome.pid';
-        if (file_exists($pid_file)) {
-            $pid = intval(file_get_contents($pid_file));
-            system('kill ' . $pid . ' 2>&1 > /dev/null');
-            @unlink($pid_file);
-        }
-    }
-
-    public function preInsert() {
-        $this->setCategory('security', 1);
-        $this->setIsEnable(0);
-        $this->setIsVisible(0);
-    }
-
-    public function postSave() {
-        if ($this->getIsEnable() == 1) {
-            $this->refresh();
-        }
-    }
-
-    public function refresh() {
+    public static function syncDevices() {
         $username = config::byKey('username', 'sfrhome');
         $password = config::byKey('password', 'sfrhome');
         $cookiePath = config::byKey('cookiePath', 'sfrhome', '/tmp/sfrhome_session_cookies.json');
@@ -63,18 +26,16 @@ class sfrhome extends eqLogic {
             return;
         }
         
-        // Call Python script or PHP to fetch data
         $cmd = 'php ' . dirname(__FILE__) . '/../php/sfrhome_api.php';
         $cmd .= ' ' . escapeshellarg($username);
         $cmd .= ' ' . escapeshellarg($password);
         $cmd .= ' ' . escapeshellarg($cookiePath);
         exec($cmd, $output, $returnVar);
         
-        // Parse and update equipment
-        $this->updateDevices();
+        self::createOrUpdateDevices();
     }
 
-    public function updateDevices() {
+    public static function createOrUpdateDevices() {
         $file = '/tmp/sfrhome_devices.json';
         if (!file_exists($file)) {
             return;
@@ -85,6 +46,9 @@ class sfrhome extends eqLogic {
         }
         
         foreach ($data as $device) {
+            if (empty($device['id']) || empty($device['name'])) {
+                continue;
+            }
             $eqLogic = eqLogic::byLogicalId($device['id'], 'sfrhome');
             if (!is_object($eqLogic)) {
                 $eqLogic = new sfrhome();
@@ -93,52 +57,133 @@ class sfrhome extends eqLogic {
                 $eqLogic->setName($device['name']);
                 $eqLogic->setIsEnable(1);
                 $eqLogic->setIsVisible(1);
+                $eqLogic->setConfiguration('deviceType', $device['deviceType']);
+                $eqLogic->setConfiguration('model', isset($device['model_type']) ? $device['model_type'] : '');
                 $eqLogic->save();
                 $eqLogic->createCmds($device);
+                log::add('sfrhome', 'info', 'Nouveau périphérique créé: ' . $device['name']);
             } else {
+                $eqLogic->setConfiguration('deviceType', $device['deviceType']);
+                $eqLogic->setConfiguration('model', isset($device['model_type']) ? $device['model_type'] : '');
+                $eqLogic->save();
                 $eqLogic->updateCmds($device);
             }
-            $eqLogic->setConfiguration('deviceType', $device['deviceType']);
-            $eqLogic->setConfiguration('model', $device['model_type']);
-            $eqLogic->save();
+        }
+    }
+
+    public function preInsert() {
+        $this->setCategory('security', 1);
+        $this->setIsEnable(1);
+        $this->setIsVisible(1);
+    }
+
+    public function postSave() {
+        // Ensure commands exist
+        $deviceType = $this->getConfiguration('deviceType');
+        if (!empty($deviceType) && count($this->getCmd()) == 0) {
+            $this->createCmds(array('deviceType' => $deviceType));
+        }
+    }
+
+    public function refresh() {
+        $username = config::byKey('username', 'sfrhome');
+        $password = config::byKey('password', 'sfrhome');
+        $cookiePath = config::byKey('cookiePath', 'sfrhome', '/tmp/sfrhome_session_cookies.json');
+        
+        if (empty($username) || empty($password)) {
+            return;
+        }
+        
+        // If this is the main controller, do a full sync
+        if ($this->getLogicalId() == 'controller') {
+            self::syncDevices();
+            return;
+        }
+        
+        // For individual devices, just update from cache
+        $file = '/tmp/sfrhome_devices.json';
+        if (file_exists($file)) {
+            $data = json_decode(file_get_contents($file), true);
+            if (is_array($data)) {
+                foreach ($data as $device) {
+                    if ($device['id'] == $this->getLogicalId()) {
+                        $this->updateCmds($device);
+                        break;
+                    }
+                }
+            }
         }
     }
 
     public function createCmds($device) {
-        $deviceType = $device['deviceType'];
+        $deviceType = isset($device['deviceType']) ? $device['deviceType'] : $this->getConfiguration('deviceType');
         $this->createInfoCmd('Etat', 'status', 'info', 'string');
         
-        if ($deviceType == 'ON_OFF_PLUG' || $deviceType == 'SHUTTER_COMMAND' || $deviceType == 'SHUTTER_CONTROL') {
+        if ($deviceType == 'ON_OFF_PLUG') {
             $this->createActionCmd('On', 'on', 'action', 'other');
             $this->createActionCmd('Off', 'off', 'action', 'other');
-            $this->createInfoCmd('Etat', 'state', 'info', 'binary');
+            $this->createInfoCmd('Etat binaire', 'state', 'info', 'binary');
+        } elseif ($deviceType == 'SHUTTER_COMMAND' || $deviceType == 'SHUTTER_CONTROL') {
+            $this->createActionCmd('Ouvrir', 'on', 'action', 'other');
+            $this->createActionCmd('Fermer', 'off', 'action', 'other');
         } elseif ($deviceType == 'ALARM_PANEL') {
             $this->createActionCmd('Désactiver', 'alarm_off', 'action', 'other');
-            $this->createActionCmd('Activer', 'alarm_on', 'action', 'other');
+            $this->createActionCmd('Activer (Absent)', 'alarm_on', 'action', 'other');
             $this->createActionCmd('Nuit', 'alarm_custom', 'action', 'other');
             $this->createInfoCmd('Mode alarme', 'alarm_mode', 'info', 'string');
         } elseif ($deviceType == 'TEMP_HUM') {
             $this->createInfoCmd('Température', 'temperature', 'info', 'numeric', '°C');
             $this->createInfoCmd('Humidité', 'humidity', 'info', 'numeric', '%');
-        } elseif ($deviceType == 'MAGNETIC' || $deviceType == 'PIR_DETECTOR' || $deviceType == 'SMOKE') {
-            $this->createInfoCmd('Détecté', 'detected', 'info', 'binary');
+        } elseif ($deviceType == 'MAGNETIC') {
+            $this->createInfoCmd('Contact', 'contact', 'info', 'binary');
+        } elseif ($deviceType == 'PIR_DETECTOR') {
+            $this->createInfoCmd('Mouvement', 'motion', 'info', 'binary');
+        } elseif ($deviceType == 'SMOKE') {
+            $this->createInfoCmd('Fumée', 'smoke', 'info', 'binary');
+        } elseif (in_array($deviceType, array('LED_BULB_DIMMER', 'LED_BULB_HUE', 'LED_BULB_COLOR'))) {
+            $this->createActionCmd('On', 'on', 'action', 'other');
+            $this->createActionCmd('Off', 'off', 'action', 'other');
+            $this->createInfoCmd('Etat', 'light_state', 'info', 'binary');
+        } elseif ($deviceType == 'CAMERA_WIFI') {
+            $this->createInfoCmd('Mouvement', 'motion', 'info', 'binary');
+            $this->createInfoCmd('URL snapshot', 'snapshot_url', 'info', 'string');
         }
     }
 
     public function updateCmds($device) {
-        $cmds = $this->getCmd();
-        foreach ($cmds as $cmd) {
-            if ($cmd->getLogicalId() == 'status') {
-                $cmd->event($device['status']);
-            } elseif ($cmd->getLogicalId() == 'temperature' && isset($device['sensorValues']['Temperature'])) {
+        $deviceType = isset($device['deviceType']) ? $device['deviceType'] : $this->getConfiguration('deviceType');
+        $status = isset($device['status']) ? $device['status'] : '';
+        
+        $statusCmd = $this->getCmd(null, 'status');
+        if (is_object($statusCmd)) {
+            $statusCmd->event($status);
+        }
+        
+        if ($deviceType == 'TEMP_HUM' && isset($device['sensorValues'])) {
+            if (isset($device['sensorValues']['Temperature'])) {
                 $val = str_replace('°C', '', $device['sensorValues']['Temperature']['value']);
-                $cmd->event(floatval($val));
-            } elseif ($cmd->getLogicalId() == 'humidity' && isset($device['sensorValues']['Humidity'])) {
+                $this->checkAndUpdateCmd('temperature', floatval($val));
+            }
+            if (isset($device['sensorValues']['Humidity'])) {
                 $val = str_replace('%', '', $device['sensorValues']['Humidity']['value']);
-                $cmd->event(floatval($val));
-            } elseif ($cmd->getLogicalId() == 'detected') {
-                $detected = ($device['status'] == 'TRIGGERED' || $device['status'] == 'OPEN' || $device['status'] == 'ALARM') ? 1 : 0;
-                $cmd->event($detected);
+                $this->checkAndUpdateCmd('humidity', floatval($val));
+            }
+        } elseif ($deviceType == 'MAGNETIC') {
+            $contact = ($status == 'TRIGGERED' || $status == 'OPEN') ? 0 : 1;
+            $this->checkAndUpdateCmd('contact', $contact);
+        } elseif ($deviceType == 'PIR_DETECTOR') {
+            $motion = ($status == 'TRIGGERED') ? 1 : 0;
+            $this->checkAndUpdateCmd('motion', $motion);
+        } elseif ($deviceType == 'SMOKE') {
+            $smoke = ($status == 'TRIGGERED' || $status == 'ALARM') ? 1 : 0;
+            $this->checkAndUpdateCmd('smoke', $smoke);
+        } elseif ($deviceType == 'ALARM_PANEL') {
+            $this->checkAndUpdateCmd('alarm_mode', $status);
+        } elseif ($deviceType == 'CAMERA_WIFI') {
+            $motion = ($status == 'TRIGGERED' || $status == 'MOTION') ? 1 : 0;
+            $this->checkAndUpdateCmd('motion', $motion);
+            if (isset($device['deviceMac'])) {
+                $this->checkAndUpdateCmd('snapshot_url', 'https://home.sfr.fr/homescope/snapshot?mac=' . $device['deviceMac']);
             }
         }
     }
@@ -173,6 +218,10 @@ class sfrhome extends eqLogic {
         }
         return $cmd;
     }
+    
+    public static function sync() {
+        self::syncDevices();
+    }
 }
 
 class sfrhomeCmd extends cmd {
@@ -185,20 +234,25 @@ class sfrhomeCmd extends cmd {
         $password = config::byKey('password', 'sfrhome');
         $cookiePath = config::byKey('cookiePath', 'sfrhome', '/tmp/sfrhome_session_cookies.json');
         
+        $cmd = 'php ' . dirname(__FILE__) . '/../php/sfrhome_control.php';
+        $cmd .= ' ' . escapeshellarg($username);
+        $cmd .= ' ' . escapeshellarg($password);
+        $cmd .= ' ' . escapeshellarg($cookiePath);
+        
         if ($logicalId == 'on') {
-            $cmd = 'php ' . dirname(__FILE__) . '/../php/sfrhome_control.php ' . escapeshellarg($username) . ' ' . escapeshellarg($password) . ' ' . escapeshellarg($cookiePath) . ' ' . escapeshellarg($deviceId) . ' on';
+            $cmd .= ' ' . escapeshellarg($deviceId) . ' on';
             exec($cmd);
         } elseif ($logicalId == 'off') {
-            $cmd = 'php ' . dirname(__FILE__) . '/../php/sfrhome_control.php ' . escapeshellarg($username) . ' ' . escapeshellarg($password) . ' ' . escapeshellarg($cookiePath) . ' ' . escapeshellarg($deviceId) . ' off';
+            $cmd .= ' ' . escapeshellarg($deviceId) . ' off';
             exec($cmd);
         } elseif ($logicalId == 'alarm_on') {
-            $cmd = 'php ' . dirname(__FILE__) . '/../php/sfrhome_control.php ' . escapeshellarg($username) . ' ' . escapeshellarg($password) . ' ' . escapeshellarg($cookiePath) . ' alarm on';
+            $cmd .= ' alarm on';
             exec($cmd);
         } elseif ($logicalId == 'alarm_off') {
-            $cmd = 'php ' . dirname(__FILE__) . '/../php/sfrhome_control.php ' . escapeshellarg($username) . ' ' . escapeshellarg($password) . ' ' . escapeshellarg($cookiePath) . ' alarm off';
+            $cmd .= ' alarm off';
             exec($cmd);
         } elseif ($logicalId == 'alarm_custom') {
-            $cmd = 'php ' . dirname(__FILE__) . '/../php/sfrhome_control.php ' . escapeshellarg($username) . ' ' . escapeshellarg($password) . ' ' . escapeshellarg($cookiePath) . ' alarm custom';
+            $cmd .= ' alarm custom';
             exec($cmd);
         }
     }

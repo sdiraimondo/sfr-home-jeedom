@@ -38,5 +38,40 @@ if (!isConnect()) {
         <input type="number" class="configKey form-control" data-l1key="refreshInterval" value="60"/>
       </div>
     </div>
+    <div class="form-group">
+      <label class="col-md-4 control-label">{{Synchronisation automatique}}</label>
+      <div class="col-md-4">
+        <label class="checkbox-inline"><input type="checkbox" class="configKey" data-l1key="autoSync" checked/>{{Activer la découverte automatique des périphériques}}</label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="col-md-4 control-label">{{Actions}}</label>
+      <div class="col-md-4">
+        <a class="btn btn-success" id="bt_syncSfrHome"><i class="fas fa-sync"></i> {{Synchroniser les périphériques}}</a>
+      </div>
+    </div>
   </fieldset>
 </form>
+
+<script>
+$('#bt_syncSfrHome').on('click', function () {
+  $.ajax({
+    type: "POST",
+    url: "plugins/sfrhome/core/ajax/sfrhome.ajax.php",
+    data: {
+      action: "sync"
+    },
+    dataType: 'json',
+    error: function (request, status, error) {
+      handleAjaxError(request, status, error);
+    },
+    success: function (data) {
+      if (data.state != 'ok') {
+        $('#div_alert').showAlert({message: data.result, level: 'danger'});
+        return;
+      }
+      $('#div_alert').showAlert({message: '{{Synchronisation réussie}}', level: 'success'});
+    }
+  });
+});
+</script>
