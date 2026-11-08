@@ -469,6 +469,8 @@ class sfrhome extends eqLogic {
         $deviceType = strtoupper(isset($device['deviceType']) ? $device['deviceType'] : $this->getConfiguration('deviceType'));
         $status = isset($device['status']) ? strtoupper($device['status']) : '';
         $sensorValues = isset($device['sensorValues']) && is_array($device['sensorValues']) ? $device['sensorValues'] : array();
+        $automation = isset($device['automation']) && is_array($device['automation']) ? $device['automation'] : array();
+        $onOff = self::boolFromValue(isset($automation['on_off']) ? $automation['on_off'] : '');
 
         $this->checkAndUpdateCmd('status', $status);
 
@@ -484,15 +486,26 @@ class sfrhome extends eqLogic {
                 $this->checkAndUpdateCmd('humidity', floatval($val));
             }
         } elseif ($deviceType == 'MAGNETIC') {
-            $this->checkAndUpdateCmd('contact', $isTriggered ? 0 : 1);
+            // on_off=1 => ouvert ; on_off=0 => fermé.
+            // Sans information d'état, on conserve la dernière valeur connue.
+            if ($onOff !== null) {
+                $this->checkAndUpdateCmd('contact', $onOff ? 1 : 0);
+            }
         } elseif ($deviceType == 'PIR_DETECTOR') {
-            $this->checkAndUpdateCmd('motion', $isTriggered ? 1 : 0);
+            if ($onOff !== null) {
+                $this->checkAndUpdateCmd('motion', $onOff ? 1 : 0);
+            }
         } elseif ($deviceType == 'SMOKE') {
-            $this->checkAndUpdateCmd('smoke', $isTriggered ? 1 : 0);
+            if ($onOff !== null) {
+                $this->checkAndUpdateCmd('smoke', $onOff ? 1 : 0);
+            }
         } elseif ($deviceType == 'ALARM_PANEL') {
             $this->checkAndUpdateCmd('alarm_mode', $status);
         } elseif ($deviceType == 'ON_OFF_PLUG' || in_array($deviceType, array('LED_BULB_DIMMER', 'LED_BULB_HUE', 'LED_BULB_COLOR'))) {
-            $on = self::boolFromValue(isset($sensorValues['trigger']) ? $sensorValues['trigger']['value'] : '');
+            $on = $onOff;
+            if ($on === null) {
+                $on = self::boolFromValue(isset($sensorValues['trigger']) ? $sensorValues['trigger']['value'] : '');
+            }
             if ($on === null) {
                 $on = ($status !== 'UNREACHABLE' && $status !== 'OFF') ? 1 : 0;
             }

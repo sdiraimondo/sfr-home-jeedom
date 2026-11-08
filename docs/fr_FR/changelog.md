@@ -1,5 +1,16 @@
 # Changelog plugin SFR Home
 
+# 08/11/2026 - 0.2.4
+
+- Correction de l'état des contacts magnétiques : utilisation de
+  `automation.on_off` (`1` = ouvert, `0` = fermé) au lieu du champ `status`
+- `Etat` reste un indicateur de santé du capteur (`OK`, `LOW_BAT`,
+  `UNREACHABLE`…) et n'est plus confondu avec l'ouverture
+- Même correction pour les détecteurs de mouvement et de fumée
+- Analyse des vraies balises `<sensorValues name="...">valeur</sensorValues>`
+  (température, humidité)
+- Utilisation de `automation.on_off` pour l'état des prises et des lumières
+
 # 08/11/2026 - 0.2.3
 
 - Découverte des caméras via l'endpoint dédié SFR `/homescope/mycams`

@@ -451,11 +451,21 @@ function parseDevices($xmlString) {
             && ($deviceType !== '' || $status !== '' || $hasSensorValue);
 
         if ($isDevice) {
+            // État ON/OFF du capteur : <automation on_off="0|1">.
+            // C'est la source fiable pour un contact magnétique, un détecteur
+            // de mouvement ou un détecteur de fumée (status ne décrit que la santé).
+            $automation = array();
+            if (isset($node->automation)) {
+                foreach ($node->automation->attributes() as $key => $value) {
+                    $automation[strtolower((string)$key)] = trim((string)$value);
+                }
+            }
+
             $sensorValues = array();
-            $collect = function ($parent) use (&$collect, &$sensorValues, $attr, $childText, $sensorTags) {
+            $collect = function ($parent) use (&$collect, &$sensorValues, $attr, $childText) {
                 foreach ($parent->children() as $child) {
                     $childTag = strtolower($child->getName());
-                    if (!in_array($childTag, array('sensorvalue', 'sv'), true)) {
+                    if (!in_array($childTag, array('sensorvalue', 'sensorvalues', 'sv'), true)) {
                         continue;
                     }
                     $svName = $attr($child, 'name');
@@ -466,11 +476,13 @@ function parseDevices($xmlString) {
                         $svName = $attr($child, 'id');
                     }
                     if ($svName === '') {
-                        $svName = 'value_' . count($sensorValues);
+                        // Balise conteneur sans attribut name : explorer ses enfants.
+                        $collect($child);
+                        continue;
                     }
-                    $value = $attr($child, 'value');
+                    $value = trim((string)$child);
                     if ($value === '') {
-                        $value = trim((string)$child);
+                        $value = $attr($child, 'value');
                     }
                     if ($value === '') {
                         $value = $childText($child, 'value');
@@ -479,11 +491,6 @@ function parseDevices($xmlString) {
                 }
             };
             $collect($node);
-            foreach ($node->children() as $child) {
-                if (strtolower($child->getName()) === 'sensorvalues') {
-                    $collect($child);
-                }
-            }
 
             $found[] = array(
                 'id'           => $id,
@@ -491,6 +498,7 @@ function parseDevices($xmlString) {
                 'deviceType'   => strtoupper($deviceType),
                 'model_type'   => $modelType,
                 'status'       => $status,
+                'automation'   => $automation,
                 'deviceMac'    => $deviceMac,
                 'sensorValues' => $sensorValues,
             );
@@ -515,6 +523,13 @@ function parseDevices($xmlString) {
                 $byId[$device['id']][$key] = $device[$key];
             }
         }
+        if (!empty($device['automation']) && is_array($device['automation'])) {
+            foreach ($device['automation'] as $key => $value) {
+                if (!isset($byId[$device['id']]['automation'][$key]) || $byId[$device['id']]['automation'][$key] === '') {
+                    $byId[$device['id']]['automation'][$key] = $value;
+                }
+            }
+        }
         $byId[$device['id']]['sensorValues'] = array_merge(
             $byId[$device['id']]['sensorValues'],
             $device['sensorValues']
@@ -537,6 +552,7 @@ function parseDevices($xmlString) {
             'deviceType'   => 'ALARM_PANEL',
             'model_type'   => $alarmInfo['model'],
             'status'       => $alarmInfo['mode'],
+            'automation'   => array(),
             'deviceMac'    => '',
             'sensorValues' => array('AlarmMode' => array('value' => $alarmInfo['mode'])),
         );
