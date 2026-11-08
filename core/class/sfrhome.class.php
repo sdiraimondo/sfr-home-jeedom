@@ -471,10 +471,11 @@ class sfrhome extends eqLogic {
         $sensorValues = isset($device['sensorValues']) && is_array($device['sensorValues']) ? $device['sensorValues'] : array();
         $automation = isset($device['automation']) && is_array($device['automation']) ? $device['automation'] : array();
         $onOff = self::boolFromValue(isset($automation['on_off']) ? $automation['on_off'] : '');
+        $triggerValue = array_key_exists('trigger', $device) ? self::boolFromValue($device['trigger']) : null;
 
         $this->checkAndUpdateCmd('status', $status);
 
-        $isTriggered = in_array($status, array('TRIGGERED', 'OPEN', 'ALARM', 'MOTION'));
+        $isTriggered = $triggerValue !== null ? $triggerValue : in_array($status, array('TRIGGERED', 'OPEN', 'ALARM', 'MOTION'));
 
         if ($deviceType == 'TEMP_HUM') {
             if (isset($sensorValues['Temperature'])) {
@@ -486,18 +487,21 @@ class sfrhome extends eqLogic {
                 $this->checkAndUpdateCmd('humidity', floatval($val));
             }
         } elseif ($deviceType == 'MAGNETIC') {
-            // on_off=1 => ouvert ; on_off=0 => fermé.
-            // Sans information d'état, on conserve la dernière valeur connue.
-            if ($onOff !== null) {
-                $this->checkAndUpdateCmd('contact', $onOff ? 1 : 0);
+            // Capteurs d'alarme SFR : <trigger>1</trigger> = ouvert/déclenché.
+            // automation.on_off peut exister selon les installations ; trigger est prioritaire.
+            $contact = $triggerValue !== null ? $triggerValue : $onOff;
+            if ($contact !== null) {
+                $this->checkAndUpdateCmd('contact', $contact ? 1 : 0);
             }
         } elseif ($deviceType == 'PIR_DETECTOR') {
-            if ($onOff !== null) {
-                $this->checkAndUpdateCmd('motion', $onOff ? 1 : 0);
+            $motion = $triggerValue !== null ? $triggerValue : $onOff;
+            if ($motion !== null) {
+                $this->checkAndUpdateCmd('motion', $motion ? 1 : 0);
             }
         } elseif ($deviceType == 'SMOKE') {
-            if ($onOff !== null) {
-                $this->checkAndUpdateCmd('smoke', $onOff ? 1 : 0);
+            $smoke = $triggerValue !== null ? $triggerValue : $onOff;
+            if ($smoke !== null) {
+                $this->checkAndUpdateCmd('smoke', $smoke ? 1 : 0);
             }
         } elseif ($deviceType == 'ALARM_PANEL') {
             $this->checkAndUpdateCmd('alarm_mode', $status);

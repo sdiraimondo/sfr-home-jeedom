@@ -1,5 +1,13 @@
 # Changelog plugin SFR Home
 
+# 08/11/2026 - 0.2.5
+
+- Correction de la remontée des contacts magnétiques, mouvements et fumée :
+  SFR expose l'état via `<trigger>1|0</trigger>` (avec `<automation />` vide)
+  sur les capteurs d'alarme ; le plugin utilise désormais `trigger` en priorité
+- `automation.on_off` reste utilisé en repli et pour les prises/lumières
+- Ajout de `trigger` dans le parseur `/mysensors`
+
 # 08/11/2026 - 0.2.4
 
 - Correction de l'état des contacts magnétiques : utilisation de

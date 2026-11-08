@@ -425,6 +425,7 @@ function parseDevices($xmlString) {
         $modelType = $nodeValue($node, array('model_type', 'modelType', 'model', 'deviceModel'));
         $name = $nodeValue($node, array('name', 'deviceName', 'label', 'long_name'));
         $status = $nodeValue($node, array('status', 'deviceStatus'));
+        $trigger = $nodeValue($node, array('trigger'));
         $deviceMac = $nodeValue($node, array('deviceMac', 'mac'));
 
         // Détection de la centrale d'alarme (attributs ou enfants de la racine).
@@ -451,9 +452,10 @@ function parseDevices($xmlString) {
             && ($deviceType !== '' || $status !== '' || $hasSensorValue);
 
         if ($isDevice) {
-            // État ON/OFF du capteur : <automation on_off="0|1">.
-            // C'est la source fiable pour un contact magnétique, un détecteur
-            // de mouvement ou un détecteur de fumée (status ne décrit que la santé).
+            // État du capteur :
+            // - certains périphériques exposent <automation on_off="0|1"> (prises/lumières) ;
+            // - les capteurs d'alarme (MAGNETIC/PIR/SMOKE) exposent souvent <trigger>0|1</trigger>
+            //   avec une balise <automation /> vide. <status> ne décrit que la santé.
             $automation = array();
             if (isset($node->automation)) {
                 foreach ($node->automation->attributes() as $key => $value) {
@@ -498,6 +500,7 @@ function parseDevices($xmlString) {
                 'deviceType'   => strtoupper($deviceType),
                 'model_type'   => $modelType,
                 'status'       => $status,
+                'trigger'      => $trigger,
                 'automation'   => $automation,
                 'deviceMac'    => $deviceMac,
                 'sensorValues' => $sensorValues,
@@ -518,8 +521,8 @@ function parseDevices($xmlString) {
             $byId[$device['id']] = $device;
             continue;
         }
-        foreach (array('name', 'deviceType', 'model_type', 'status', 'deviceMac') as $key) {
-            if ($byId[$device['id']][$key] === '' && $device[$key] !== '') {
+        foreach (array('name', 'deviceType', 'model_type', 'status', 'trigger', 'deviceMac') as $key) {
+            if ((!isset($byId[$device['id']][$key]) || $byId[$device['id']][$key] === '') && isset($device[$key]) && $device[$key] !== '') {
                 $byId[$device['id']][$key] = $device[$key];
             }
         }
@@ -552,6 +555,7 @@ function parseDevices($xmlString) {
             'deviceType'   => 'ALARM_PANEL',
             'model_type'   => $alarmInfo['model'],
             'status'       => $alarmInfo['mode'],
+            'trigger'      => '',
             'automation'   => array(),
             'deviceMac'    => '',
             'sensorValues' => array('AlarmMode' => array('value' => $alarmInfo['mode'])),

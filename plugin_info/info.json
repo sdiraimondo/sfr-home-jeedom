@@ -1,7 +1,7 @@
 {
     "id": "sfrhome",
     "name": "SFR Home",
-    "pluginVersion": "0.2.4",
+    "pluginVersion": "0.2.5",
     "description": {
         "fr_FR": "Plugin pour connecter et contrôler les équipements SFR Home dans Jeedom",
         "en_US": "Plugin to connect and control SFR Home devices in Jeedom"
