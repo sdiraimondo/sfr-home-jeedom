@@ -1,5 +1,19 @@
 # Changelog plugin SFR Home
 
+# 08/11/2026 - 0.2.3
+
+- Découverte des caméras via l'endpoint dédié SFR `/homescope/mycams`
+- Fusion des caméras avec les capteurs `CAMERA_WIFI` / `PIR_CAMERA` par adresse
+  MAC, sans créer de doublon
+- Catégorie Jeedom **Multimédia** pour les caméras, avec migration automatique
+  des caméras encore classées en **Sécurité** (les personnalisations ultérieures
+  sont conservées)
+- Nouvelles commandes caméra : en ligne, confidentialité, enregistrement 24h/24,
+  profil de détection, sensibilité, image inversée, LED éteinte et URL du flux
+- Snapshot affiché via un proxy local authentifié : les cookies SFR restent
+  côté serveur
+- Commandes **Démarrer l'enregistrement** et **Arrêter l'enregistrement**
+
 # 08/11/2026 - 0.2.2
 
 - Catégorisation automatique des équipements dans Jeedom selon leur type SFR

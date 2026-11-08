@@ -6,7 +6,7 @@ class sfrhome extends eqLogic {
      * Version du mapping des catégories. À incrémenter pour forcer la
      * réapplication des catégories sur les équipements existants.
      */
-    const CATEGORY_VERSION = 1;
+    const CATEGORY_VERSION = 2;
 
     /**
      * Catégories Jeedom utilisées par le plugin.
@@ -170,8 +170,10 @@ class sfrhome extends eqLogic {
             'PIR_DETECTOR'       => array('security'),
             'SMOKE'              => array('security'),
             'WATER_LEAK'         => array('security'),
-            'CAMERA'             => array('security'),
-            'CAMERA_WIFI'        => array('security'),
+            // Caméras (Jeedom les classe en Multimédia)
+            'CAMERA'             => array('multimedia'),
+            'CAMERA_WIFI'        => array('multimedia'),
+            'PIR_CAMERA'         => array('multimedia'),
             // Température et chauffage
             'TEMP_HUM'           => array('heating'),
             'THERMOSTAT'         => array('heating'),
@@ -204,16 +206,28 @@ class sfrhome extends eqLogic {
             || strpos($type, 'GATE') !== false) {
             return array('opening');
         }
+        if (strpos($type, 'CAMERA') !== false) {
+            return array('multimedia');
+        }
         if (strpos($type, 'ALARM') !== false || strpos($type, 'SIREN') !== false
             || strpos($type, 'DETECTOR') !== false || strpos($type, 'SENSOR') !== false
             || strpos($type, 'SMOKE') !== false || strpos($type, 'MAGNETIC') !== false
             || strpos($type, 'CONTACT') !== false || strpos($type, 'MOTION') !== false
-            || strpos($type, 'LEAK') !== false || strpos($type, 'CAMERA') !== false
+            || strpos($type, 'LEAK') !== false
             || strpos($type, 'KEYPAD') !== false || strpos($type, 'REMOTE') !== false) {
             return array('security');
         }
 
         return array('default');
+    }
+
+    /**
+     * Indique si un type SFR correspond à une caméra.
+     */
+    public static function isCameraType($deviceType) {
+        $type = strtoupper(trim((string)$deviceType));
+        return $type === 'CAMERA' || $type === 'CAMERA_WIFI' || $type === 'PIR_CAMERA'
+            || strpos($type, 'CAMERA') !== false;
     }
 
     /**
@@ -224,6 +238,54 @@ class sfrhome extends eqLogic {
         foreach (self::$jeedomCategories as $category) {
             $eqLogic->setCategory($category, in_array($category, $wanted, true) ? 1 : 0);
         }
+    }
+
+    /**
+     * Génère (une seule fois) le jeton qui protège le proxy de snapshot.
+     */
+    private static function ensureSnapshotToken() {
+        if (config::byKey('snapshotToken', 'sfrhome', '') !== '') {
+            return;
+        }
+        try {
+            config::save('snapshotToken', bin2hex(random_bytes(16)), 'sfrhome');
+        } catch (Exception $e) {
+            log::add('sfrhome', 'warning', __('Impossible de générer le jeton snapshot : ', __FILE__) . $e->getMessage());
+        }
+    }
+
+    /**
+     * Enregistre les informations caméra utiles dans la configuration de l'équipement.
+     * Retourne true si une valeur a changé.
+     */
+    private static function updateCameraConfiguration($eqLogic, $device) {
+        $deviceType = isset($device['deviceType']) ? $device['deviceType'] : '';
+        if (!self::isCameraType($deviceType)) {
+            return false;
+        }
+
+        $camera = (isset($device['camera']) && is_array($device['camera'])) ? $device['camera'] : array();
+        $mac = isset($device['deviceMac']) ? strtolower(trim($device['deviceMac'])) : '';
+
+        $values = array(
+            'cameraMac'         => $mac,
+            'cameraId'          => isset($camera['cameraId']) ? $camera['cameraId'] : '',
+            'cameraSnapshotUrl' => isset($camera['snapshotUrl']) ? $camera['snapshotUrl'] : '',
+            'cameraStreamUrl'   => isset($camera['streamUrl']) ? $camera['streamUrl'] : '',
+        );
+
+        $changed = false;
+        foreach ($values as $key => $value) {
+            // Ne pas effacer une information déjà connue si /mycams est momentanément indisponible.
+            if ($value === '' && $key !== 'cameraMac') {
+                continue;
+            }
+            if ($eqLogic->getConfiguration($key) !== $value) {
+                $eqLogic->setConfiguration($key, $value);
+                $changed = true;
+            }
+        }
+        return $changed;
     }
 
     /**
@@ -240,6 +302,8 @@ class sfrhome extends eqLogic {
             log::add('sfrhome', 'error', __('Fichier des périphériques invalide', __FILE__));
             return;
         }
+
+        self::ensureSnapshotToken();
 
         foreach ($data as $device) {
             if (empty($device['id']) || empty($device['name'])) {
@@ -259,18 +323,36 @@ class sfrhome extends eqLogic {
                 $eqLogic->setConfiguration('categoryVersion', self::CATEGORY_VERSION);
                 $eqLogic->setConfiguration('deviceType', $deviceType);
                 $eqLogic->setConfiguration('model', isset($device['model_type']) ? $device['model_type'] : '');
+                self::updateCameraConfiguration($eqLogic, $device);
                 $eqLogic->save();
                 $eqLogic->createCmds($device);
                 log::add('sfrhome', 'info', __('Nouveau périphérique créé : ', __FILE__) . $device['name'] . ' (' . $deviceType . ')');
             } else {
                 $typeChanged = ($eqLogic->getConfiguration('deviceType') !== $deviceType);
-                $categoryOutdated = intval($eqLogic->getConfiguration('categoryVersion', 0)) < self::CATEGORY_VERSION;
+                $storedCategoryVersion = intval($eqLogic->getConfiguration('categoryVersion', 0));
+                $categoryOutdated = $storedCategoryVersion < self::CATEGORY_VERSION;
+
+                // Migration ciblée : en 0.2.2 les caméras étaient classées en "security".
+                $applyCategories = $typeChanged;
+                if ($categoryOutdated) {
+                    if ($storedCategoryVersion < 1) {
+                        $applyCategories = true;
+                    } elseif (self::isCameraType($deviceType) && intval($eqLogic->getCategory('security', 0)) === 1) {
+                        $applyCategories = true;
+                    }
+                }
+
+                $cameraChanged = self::updateCameraConfiguration($eqLogic, $device);
                 $changed = $typeChanged
                     || $categoryOutdated
+                    || $cameraChanged
                     || ($eqLogic->getConfiguration('model') !== (isset($device['model_type']) ? $device['model_type'] : ''));
+
                 if ($changed) {
-                    if ($typeChanged || $categoryOutdated) {
+                    if ($applyCategories) {
                         self::applyCategories($eqLogic, $deviceType);
+                    }
+                    if ($typeChanged || $categoryOutdated) {
                         $eqLogic->setConfiguration('categoryVersion', self::CATEGORY_VERSION);
                     }
                     $eqLogic->setConfiguration('deviceType', $deviceType);
@@ -362,11 +444,24 @@ class sfrhome extends eqLogic {
             $this->setCmdGenericType('on', 'LIGHT_ON');
             $this->setCmdGenericType('off', 'LIGHT_OFF');
             $this->setCmdGenericType('state', 'LIGHT_STATE');
-        } elseif ($deviceType == 'CAMERA_WIFI') {
+        } elseif (self::isCameraType($deviceType)) {
             $this->createInfoCmd('Mouvement', 'motion', 'info', 'binary');
             $this->createInfoCmd('URL snapshot', 'snapshot_url', 'info', 'string');
+            $this->createInfoCmd('URL flux', 'stream_url', 'info', 'string');
+            $this->createInfoCmd('En ligne', 'online', 'info', 'binary');
+            $this->createInfoCmd('Confidentialité', 'privacy', 'info', 'binary');
+            $this->createInfoCmd('Enregistrement 24h/24', 'rec24', 'info', 'binary');
+            $this->createInfoCmd('Profil de détection', 'detection_profile', 'info', 'numeric');
+            $this->createInfoCmd('Sensibilité', 'sensitivity', 'info', 'numeric');
+            $this->createInfoCmd('Image inversée', 'flip', 'info', 'binary');
+            $this->createInfoCmd('LED éteinte', 'led_off', 'info', 'binary');
+            $this->createActionCmd("Démarrer l'enregistrement", 'camera_record', 'action', 'other');
+            $this->createActionCmd("Arrêter l'enregistrement", 'camera_stop_record', 'action', 'other');
             $this->setCmdGenericType('motion', 'PRESENCE');
             $this->setCmdGenericType('snapshot_url', 'CAMERA_URL');
+            $this->setCmdGenericType('online', 'ONLINE');
+            $this->setCmdGenericType('rec24', 'CAMERA_RECORD_STATE');
+            $this->setCmdGenericType('camera_record', 'CAMERA_RECORD');
         }
     }
 
@@ -402,12 +497,45 @@ class sfrhome extends eqLogic {
                 $on = ($status !== 'UNREACHABLE' && $status !== 'OFF') ? 1 : 0;
             }
             $this->checkAndUpdateCmd('state', $on ? 1 : 0);
-        } elseif ($deviceType == 'CAMERA_WIFI') {
+        } elseif (self::isCameraType($deviceType)) {
+            $camera = (isset($device['camera']) && is_array($device['camera'])) ? $device['camera'] : array();
             $this->checkAndUpdateCmd('motion', $isTriggered ? 1 : 0);
-            if (!empty($device['deviceMac'])) {
-                $this->checkAndUpdateCmd('snapshot_url', 'https://home.sfr.fr/homescope/snapshot?mac=' . $device['deviceMac']);
+
+            $mac = $this->getConfiguration('cameraMac', isset($device['deviceMac']) ? $device['deviceMac'] : '');
+            if ($mac !== '') {
+                $this->checkAndUpdateCmd('snapshot_url', $this->getSnapshotProxyUrl($mac));
+            }
+
+            if (!empty($camera)) {
+                $this->checkAndUpdateCmd('online', !empty($camera['reachable']) ? 1 : 0);
+                $this->checkAndUpdateCmd('privacy', !empty($camera['privacy']) ? 1 : 0);
+                $this->checkAndUpdateCmd('rec24', !empty($camera['rec24']) ? 1 : 0);
+                $this->checkAndUpdateCmd('detection_profile', isset($camera['detectionProfile']) ? intval($camera['detectionProfile']) : 0);
+                $this->checkAndUpdateCmd('sensitivity', isset($camera['sensitivity']) ? intval($camera['sensitivity']) : 0);
+                $this->checkAndUpdateCmd('flip', !empty($camera['flip']) ? 1 : 0);
+                $this->checkAndUpdateCmd('led_off', (isset($camera['ledMode']) && intval($camera['ledMode']) === 1) ? 1 : 0);
+                $this->checkAndUpdateCmd('stream_url', isset($camera['streamUrl']) ? $camera['streamUrl'] : '');
             }
         }
+    }
+
+    /**
+     * URL du proxy local qui sert le snapshot avec les cookies SFR du plugin.
+     */
+    private function getSnapshotProxyUrl($mac) {
+        $url = '/plugins/sfrhome/core/ajax/sfrhome_snapshot.php?eqLogic_id=' . intval($this->getId());
+        $url .= '&mac=' . rawurlencode(strtolower(trim((string)$mac)));
+        $token = config::byKey('snapshotToken', 'sfrhome', '');
+        if ($token !== '') {
+            $url .= '&token=' . rawurlencode($token);
+        }
+
+        // URL absolue si Jeedom dispose d'un DNS/URL connu, sinon URL relative.
+        $base = config::byKey('jeedom::url', 'core', '');
+        if ($base !== '' && preg_match('#^https?://#i', $base)) {
+            return rtrim($base, '/') . $url;
+        }
+        return $url;
     }
 
     private static function boolFromValue($value) {
@@ -489,6 +617,9 @@ class sfrhomeCmd extends cmd {
 
         if ($logicalId == 'on' || $logicalId == 'off') {
             $cmd .= ' ' . escapeshellarg($deviceId) . ' ' . escapeshellarg($logicalId);
+        } elseif ($logicalId == 'camera_record' || $logicalId == 'camera_stop_record') {
+            $mac = $eqLogic->getConfiguration('cameraMac', $eqLogic->getConfiguration('deviceMac', ''));
+            $cmd .= ' ' . escapeshellarg($deviceId) . ' ' . escapeshellarg($logicalId) . ' ' . escapeshellarg($mac);
         } elseif ($logicalId == 'alarm_on') {
             $cmd .= ' alarm on';
         } elseif ($logicalId == 'alarm_off') {

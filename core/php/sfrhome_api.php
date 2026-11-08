@@ -4,8 +4,10 @@
  *
  * Usage :
  *   php sfrhome_api.php <username> <password> <cookiePath> [--test]
+ *   php sfrhome_api.php <username> <password> <cookiePath> --snapshot <mac>
  *
  * Sortie : JSON {"ok":bool,"count":int,"message":string}
+ * En mode --snapshot, la sortie est l'image binaire (ou une erreur sur STDERR).
  */
 
 $username   = isset($argv[1]) ? $argv[1] : '';
@@ -13,9 +15,18 @@ $password   = isset($argv[2]) ? $argv[2] : '';
 $cookiePath = isset($argv[3]) ? $argv[3] : '/tmp/sfrhome_session_cookies.json';
 $testOnly   = in_array('--test', $argv, true);
 
+// Mode utilisé par le proxy de snapshot : php sfrhome_api.php ... --snapshot <mac>
+$snapshotMac = '';
+$snapshotIndex = array_search('--snapshot', $argv, true);
+if ($snapshotIndex !== false && isset($argv[$snapshotIndex + 1])) {
+    $snapshotMac = trim($argv[$snapshotIndex + 1]);
+}
+
 const SFR_BASE_URL     = 'https://home.sfr.fr/';
 const SFR_LOGIN_URL    = 'https://home.sfr.fr/login';
 const SFR_MYSENSORS_URL = 'https://home.sfr.fr/mysensors';
+const SFR_MYCAMS_URL   = 'https://home.sfr.fr/homescope/mycams';
+const SFR_SNAPSHOT_URL = 'https://home.sfr.fr/homescope/snapshot';
 const USER_AGENT       = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
 function output($ok, $message, $count = 0) {
@@ -315,6 +326,45 @@ function fetchMysensors($cookies) {
     ));
 }
 
+/**
+ * Liste des caméras SFR (endpoint distinct de /mysensors).
+ * Réponse XML : <Cameras><status>OK</status><Camera id="...">...</Camera></Cameras>
+ */
+function fetchCameras($cookies) {
+    return httpRequest(SFR_MYCAMS_URL, 'GET', null, $cookies, false, array(
+        'Referer: https://home.sfr.fr/accueil',
+        'X-Requested-With: XMLHttpRequest',
+        'Accept: application/xml,text/xml,*/*',
+    ));
+}
+
+/**
+ * Snapshot d'une caméra (image binaire).
+ */
+function fetchSnapshot($cookies, $mac) {
+    $url = SFR_SNAPSHOT_URL . '?mac=' . rawurlencode(strtolower(trim((string)$mac))) . '&size=8';
+    return httpRequest($url, 'GET', null, $cookies, false, array(
+        'Referer: https://home.sfr.fr/accueil',
+        'Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+    ));
+}
+
+/**
+ * Normalise un MAC pour les comparaisons (sans séparateurs, en minuscules).
+ */
+function normalizeMac($mac) {
+    return strtolower(preg_replace('/[^0-9a-f]/i', '', (string)$mac));
+}
+
+function looksLikeImage($body) {
+    if ($body === '') {
+        return false;
+    }
+    return strncmp($body, "\xFF\xD8\xFF", 3) === 0       // JPEG
+        || strncmp($body, "\x89PNG\r\n\x1A\n", 8) === 0  // PNG
+        || strncmp($body, 'GIF8', 4) === 0;              // GIF
+}
+
 function looksLikeXml($body) {
     if ($body === '') {
         return false;
@@ -495,15 +545,226 @@ function parseDevices($xmlString) {
     return array('devices' => $devices, 'message' => count($devices) . ' périphérique(s) récupéré(s)', 'valid' => true);
 }
 
+/**
+ * Analyse la réponse XML de /homescope/mycams.
+ *
+ * Structure confirmée dans l'application Android (SimpleXML) :
+ *   <Cameras>
+ *     <status>OK</status>
+ *     <error></error>
+ *     <Camera id="12">
+ *       <title>Jardin</title><model>...</model><mac>...</mac>
+ *       <privacyButton>0</privacyButton><reachable>1</reachable>
+ *       <rec24>1</rec24><detection_profile>2</detection_profile>
+ *       <flip>0</flip><ledMode>0</ledMode><sensitivity>3</sensitivity>
+ *     </Camera>
+ *   </Cameras>
+ */
+function parseCameras($xmlString) {
+    $cameras = array();
+    if (!function_exists('simplexml_load_string')) {
+        return array('cameras' => $cameras, 'message' => 'Extension PHP SimpleXML manquante', 'valid' => false);
+    }
+
+    libxml_use_internal_errors(true);
+    $xml = simplexml_load_string($xmlString);
+    if (!$xml) {
+        libxml_clear_errors();
+        return array('cameras' => $cameras, 'message' => 'XML mycams invalide', 'valid' => false);
+    }
+
+    $attr = function ($node, $key) {
+        $attrs = $node->attributes();
+        return isset($attrs[$key]) ? trim((string)$attrs[$key]) : '';
+    };
+    $childText = function ($node, $key) {
+        return isset($node->$key) ? trim((string)$node->$key) : '';
+    };
+    $nodeValue = function ($node, $keys) use ($attr, $childText) {
+        foreach ($keys as $key) {
+            $value = $attr($node, $key);
+            if ($value !== '') {
+                return $value;
+            }
+            $value = $childText($node, $key);
+            if ($value !== '') {
+                return $value;
+            }
+        }
+        return '';
+    };
+    $intValue = function ($node, $keys) use ($nodeValue) {
+        $value = $nodeValue($node, $keys);
+        return $value === '' ? null : intval($value);
+    };
+
+    $status = $nodeValue($xml, array('status', 'STATUS'));
+    $error = $nodeValue($xml, array('error', 'ERROR'));
+    if ($status !== '' && strtoupper($status) !== 'OK') {
+        return array(
+            'cameras' => array(),
+            'message' => $error !== '' ? $error : ('Statut caméras : ' . $status),
+            'valid'   => false,
+        );
+    }
+
+    $parseCamera = function ($node) use ($nodeValue, $intValue) {
+        $id = $nodeValue($node, array('id', 'cameraId'));
+        $mac = $nodeValue($node, array('mac', 'macAddress', 'deviceMac'));
+        if ($id === '' && $mac === '') {
+            return null;
+        }
+
+        $title = $nodeValue($node, array('title', 'name', 'cameraName'));
+        $model = $nodeValue($node, array('model', 'model_type', 'modelType'));
+        $reachable = $intValue($node, array('reachable', 'online'));
+        $privacy = $intValue($node, array('privacyButton', 'privacy', 'privacyMode'));
+        $rec24 = $intValue($node, array('rec24'));
+        $detection = $intValue($node, array('detection_profile', 'detectionProfile'));
+        $flip = $intValue($node, array('flip'));
+        $ledMode = $intValue($node, array('ledMode', 'led_mode'));
+        $sensitivity = $intValue($node, array('sensitivity'));
+
+        $macUrl = strtolower(trim((string)$mac));
+        $slug = $id !== '' ? $id : normalizeMac($mac);
+        $slug = preg_replace('/[^0-9a-zA-Z_-]/', '', $slug);
+        if ($slug === '') {
+            $slug = substr(md5($title . $macUrl), 0, 8);
+        }
+
+        return array(
+            'id'           => 'CAMERA_' . $slug,
+            'name'         => $title !== '' ? $title : ('Caméra ' . $slug),
+            'deviceType'   => 'CAMERA',
+            'model_type'   => $model,
+            'status'       => ($reachable === 1) ? 'ON' : (($reachable === 0) ? 'OFF' : ''),
+            'deviceMac'    => $macUrl,
+            'sensorValues' => array(),
+            'camera'       => array(
+                'cameraId'         => $id,
+                'snapshotUrl'      => SFR_SNAPSHOT_URL . '?mac=' . rawurlencode($macUrl) . '&size=8',
+                'streamUrl'        => SFR_BASE_URL . 'homescope/flv?mac=' . rawurlencode($macUrl) . '&audio=1',
+                'reachable'        => $reachable === 1 ? 1 : 0,
+                'privacy'          => $privacy === 1 ? 1 : 0,
+                'rec24'            => $rec24 === 1 ? 1 : 0,
+                'detectionProfile' => $detection === null ? 0 : $detection,
+                'flip'             => $flip === 1 ? 1 : 0,
+                'ledMode'          => $ledMode === null ? 0 : $ledMode,
+                'sensitivity'      => $sensitivity === null ? 0 : $sensitivity,
+            ),
+        );
+    };
+
+    $visit = function ($node) use (&$visit, &$cameras, $parseCamera) {
+        foreach ($node->children() as $child) {
+            if (strtolower($child->getName()) === 'camera') {
+                $camera = $parseCamera($child);
+                if ($camera !== null) {
+                    $cameras[] = $camera;
+                }
+            } else {
+                $visit($child);
+            }
+        }
+    };
+    $visit($xml);
+
+    return array(
+        'cameras' => $cameras,
+        'message' => count($cameras) . ' caméra(s) récupérée(s)',
+        'valid'   => true,
+    );
+}
+
+/**
+ * Fusionne les caméras avec les périphériques /mysensors.
+ * Si un capteur CAMERA_WIFI/PIR_CAMERA possède le même MAC, on l'enrichit
+ * au lieu de créer un doublon. Sinon la caméra devient un équipement à part.
+ */
+function mergeCameras($devices, $cameras) {
+    $cameraIndexByMac = array();
+    $existingIds = array();
+
+    foreach ($devices as $index => $device) {
+        if (!empty($device['id'])) {
+            $existingIds[$device['id']] = true;
+        }
+        $type = strtoupper(isset($device['deviceType']) ? $device['deviceType'] : '');
+        $mac = normalizeMac(isset($device['deviceMac']) ? $device['deviceMac'] : '');
+        if ($mac !== '' && strpos($type, 'CAMERA') !== false) {
+            $cameraIndexByMac[$mac] = $index;
+        }
+    }
+
+    foreach ($cameras as $camera) {
+        $mac = normalizeMac(isset($camera['deviceMac']) ? $camera['deviceMac'] : '');
+        if ($mac !== '' && isset($cameraIndexByMac[$mac])) {
+            $index = $cameraIndexByMac[$mac];
+            $devices[$index]['camera'] = $camera['camera'];
+            if (empty($devices[$index]['deviceMac'])) {
+                $devices[$index]['deviceMac'] = $camera['deviceMac'];
+            }
+            continue;
+        }
+
+        $id = $camera['id'];
+        if (isset($existingIds[$id])) {
+            $suffix = $mac !== '' ? $mac : substr(md5($camera['name']), 0, 6);
+            $id .= '_' . $suffix;
+        }
+        $camera['id'] = $id;
+        $devices[] = $camera;
+        $existingIds[$id] = true;
+    }
+
+    return $devices;
+}
+
 // ---------------------------------------------------------------------------
 // Programme principal
 // ---------------------------------------------------------------------------
+
+// Permet d'inclure ce fichier dans les tests sans exécuter la synchronisation.
+if (defined('SFRHOME_API_NO_RUN')) {
+    return;
+}
 
 if ($username === '' || $password === '') {
     output(false, 'Identifiant ou mot de passe manquant');
 }
 
 $cookies = loadCookies($cookiePath);
+
+// ---------------------------------------------------------------------------
+// Mode snapshot : utilisé par le proxy PHP du plugin pour afficher l'image
+// dans Jeedom (le navigateur n'a pas les cookies SFR).
+// ---------------------------------------------------------------------------
+if ($snapshotMac !== '') {
+    $response = fetchSnapshot($cookies, $snapshotMac);
+
+    $needsAuth = $response['code'] === 0
+        || in_array($response['code'], array(401, 403), true)
+        || ($response['code'] === 200 && !looksLikeImage($response['body']));
+
+    if ($needsAuth) {
+        $auth = authenticate($username, $password, $cookiePath);
+        if ($auth['cookies'] === null) {
+            fwrite(STDERR, $auth['message'] . "\n");
+            exit(1);
+        }
+        $cookies = $auth['cookies'];
+        $response = fetchSnapshot($cookies, $snapshotMac);
+    }
+
+    if ($response['code'] === 200 && looksLikeImage($response['body'])) {
+        echo $response['body'];
+        exit(0);
+    }
+
+    fwrite(STDERR, 'Snapshot indisponible (HTTP ' . $response['code'] . ")\n");
+    exit(1);
+}
+
 $response = null;
 
 // Essai avec les cookies existants (sauf en mode test : on doit valider les identifiants fournis).
@@ -548,12 +809,57 @@ if (empty($parsed['valid'])) {
     output(false, $parsed['message']);
 }
 
+// ---------------------------------------------------------------------------
+// Caméras : endpoint séparé /homescope/mycams.
+// Un échec côté caméras ne doit pas faire échouer la synchronisation des capteurs.
+// ---------------------------------------------------------------------------
+$cameraParsed = array('cameras' => array(), 'message' => '', 'valid' => false);
+$cameraMessage = '';
+$cameraResponse = fetchCameras($cookies);
+
+$cameraNeedsAuth = $cameraResponse['code'] === 0
+    || in_array($cameraResponse['code'], array(401, 403), true)
+    || ($cameraResponse['code'] === 200 && !looksLikeXml(trim($cameraResponse['body'])));
+
+if ($cameraNeedsAuth) {
+    $auth = authenticate($username, $password, $cookiePath);
+    if ($auth['cookies'] !== null) {
+        $cookies = $auth['cookies'];
+        $cameraResponse = fetchCameras($cookies);
+    }
+}
+
+if ($cameraResponse['code'] === 200) {
+    $cameraBody = trim($cameraResponse['body']);
+    if ($cameraBody !== '' && looksLikeXml($cameraBody)) {
+        file_put_contents('/tmp/sfrhome_mycams.xml', $cameraBody);
+        $cameraParsed = parseCameras($cameraBody);
+        if ($cameraParsed['valid']) {
+            $parsed['devices'] = mergeCameras($parsed['devices'], $cameraParsed['cameras']);
+        } else {
+            $cameraMessage = $cameraParsed['message'];
+        }
+    } else {
+        $cameraMessage = 'Réponse inattendue de /homescope/mycams';
+    }
+} else {
+    $cameraMessage = 'Caméras indisponibles (HTTP ' . $cameraResponse['code'] . ')';
+}
+
 file_put_contents('/tmp/sfrhome_devices.json', json_encode($parsed['devices'], JSON_UNESCAPED_UNICODE));
 
 saveCookies($cookiePath, $cookies);
+
+$messages = array(count($parsed['devices']) . ' périphérique(s) récupéré(s)');
+if ($cameraParsed['valid']) {
+    $messages[] = $cameraParsed['message'];
+} elseif ($cameraMessage !== '') {
+    $messages[] = $cameraMessage;
+}
+$message = implode(' ; ', $messages);
 
 if (empty($parsed['devices'])) {
     output(true, 'Connexion réussie mais aucun périphérique trouvé', 0);
 }
 
-output(true, $parsed['message'], count($parsed['devices']));
+output(true, $message, count($parsed['devices']));

@@ -11,7 +11,7 @@ Ce plugin permet de connecter et contrôler les équipements SFR Home dans Jeedo
 - Capteurs (ouverture, mouvement, fumée, température/humidité)
 - Volets roulants
 - Lumières
-- Caméras SFR Home
+- Caméras SFR Home (snapshot, état, enregistrement)
 
 ## Configuration
 
@@ -32,14 +32,37 @@ type SFR :
 
 - **Lumière** : ampoules connectées (LED, variateur, couleur)
 - **Énergie** : prises connectées
-- **Sécurité** : centrale d'alarme, sirènes, télécommandes, claviers, caméras,
+- **Sécurité** : centrale d'alarme, sirènes, télécommandes, claviers,
   détecteurs d'ouverture, de mouvement, de fumée et de fuite d'eau
+- **Multimédia** : caméras SFR Home
 - **Chauffage** : capteurs de température/humidité et thermostats
 - **Ouvrant** : volets roulants
 - **Autre** : types non reconnus
 
 Les équipements existants sont recatégorisés automatiquement lors de la première
-synchronisation suivant la mise à jour.
+synchronisation suivant la mise à jour. Les personnalisations effectuées ensuite
+sont conservées.
+
+## Caméras
+
+Les caméras sont découvertes à la fois via `/mysensors` (types `CAMERA_WIFI` et
+`PIR_CAMERA`) et via l'endpoint dédié SFR `/homescope/mycams`. Les deux sources
+sont fusionnées par adresse MAC afin d'éviter les doublons.
+
+Chaque caméra expose notamment :
+
+- **URL snapshot** : image servie par le proxy local du plugin
+  (`core/ajax/sfrhome_snapshot.php`). Les cookies de session SFR restent sur le
+  serveur Jeedom et ne sont jamais transmis au navigateur.
+- **URL flux** : URL FLV SFR. La lecture du flux nécessite une session SFR valide.
+- **En ligne**, **Confidentialité**, **Enregistrement 24h/24**,
+  **Profil de détection**, **Sensibilité**, **Image inversée**, **LED éteinte**.
+- **Démarrer l'enregistrement** et **Arrêter l'enregistrement**.
+
+Le proxy de snapshot est protégé par le jeton `snapshotToken`, généré
+automatiquement à l'installation du plugin. L'URL du snapshot est relative
+(`/plugins/sfrhome/...`) ; elle devient absolue si l'URL Jeedom est configurée
+dans le cœur (clé `jeedom::url`).
 
 ## Authentification
 

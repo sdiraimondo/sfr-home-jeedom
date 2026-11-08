@@ -5,6 +5,7 @@ $password = isset($argv[2]) ? $argv[2] : '';
 $cookiePath = isset($argv[3]) ? $argv[3] : '/tmp/sfrhome_session_cookies.json';
 $deviceId = isset($argv[4]) ? $argv[4] : '';
 $action = isset($argv[5]) ? $argv[5] : '';
+$mac = isset($argv[6]) ? $argv[6] : '';
 
 function loadCookieHeader($cookiePath) {
     if (!file_exists($cookiePath)) {
@@ -43,6 +44,15 @@ function sendSfrCommand($url, $cookieHeader) {
 
 if ($deviceId === 'alarm') {
     $url = 'https://home.sfr.fr/alarmmode?action=' . urlencode($action);
+} elseif ($action === 'camera_record' || $action === 'camera_stop_record') {
+    $mac = strtolower(trim($mac));
+    if ($mac === '') {
+        echo 'MAC caméra manquant';
+        exit(1);
+    }
+    $url = ($action === 'camera_record')
+        ? 'https://home.sfr.fr/homescope/record?mac=' . urlencode($mac) . '&audio=1'
+        : 'https://home.sfr.fr/homescope/stoprecord?mac=' . urlencode($mac);
 } else {
     $url = 'https://home.sfr.fr/plugcontrol?uid=' . urlencode($deviceId) . '&action=' . urlencode($action);
 }
