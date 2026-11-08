@@ -42,6 +42,23 @@ La synchronisation automatique s'exécute chaque minute, mais n'interroge SFR Ho
 que si la fréquence configurée (`refreshInterval`, 60 secondes par défaut) est écoulée.
 Chaque équipement est ensuite mis à jour avec les états frais de `/mysensors`.
 
+## Catégories
+
+Les équipements sont automatiquement classés dans les catégories Jeedom selon leur
+type SFR :
+
+- **Lumière** : ampoules connectées (LED, variateur, couleur)
+- **Énergie** : prises connectées
+- **Sécurité** : centrale d'alarme, sirènes, télécommandes, claviers, caméras,
+  détecteurs d'ouverture, de mouvement, de fumée et de fuite d'eau
+- **Chauffage** : capteurs de température/humidité et thermostats
+- **Ouvrant** : volets roulants
+- **Autre** : types non reconnus
+
+Les équipements existants sont recatégorisés automatiquement lors de la première
+synchronisation suivant la mise à jour. Les personnalisations effectuées ensuite
+sont conservées.
+
 ## Authentification
 
 Le plugin utilise le formulaire de connexion de SFR Home (avec jeton CSRF),

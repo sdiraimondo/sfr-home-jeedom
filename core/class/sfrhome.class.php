@@ -3,6 +3,19 @@
 class sfrhome extends eqLogic {
 
     /**
+     * Version du mapping des catégories. À incrémenter pour forcer la
+     * réapplication des catégories sur les équipements existants.
+     */
+    const CATEGORY_VERSION = 1;
+
+    /**
+     * Catégories Jeedom utilisées par le plugin.
+     */
+    private static $jeedomCategories = array(
+        'heating', 'security', 'energy', 'light', 'opening', 'automatism', 'multimedia', 'default',
+    );
+
+    /**
      * Cron appelé toutes les minutes par Jeedom.
      * On ne rafraîchit que si l'intervalle configuré est écoulé.
      */
@@ -129,6 +142,91 @@ class sfrhome extends eqLogic {
     }
 
     /**
+     * Retourne les catégories Jeedom correspondant à un type de périphérique SFR.
+     * SFR ne fournit pas de catégorie explicite : elle est déduite du deviceType.
+     */
+    public static function getCategoriesForDevice($deviceType) {
+        $type = strtoupper(trim((string)$deviceType));
+
+        $map = array(
+            // Éclairage
+            'LED_BULB_DIMMER'    => array('light'),
+            'LED_BULB_HUE'       => array('light'),
+            'LED_BULB_COLOR'     => array('light'),
+            'LIGHT'              => array('light'),
+            'LAMP'               => array('light'),
+            'DIMMER_LIGHT'       => array('light'),
+            // Prises et énergie
+            'ON_OFF_PLUG'        => array('energy'),
+            'PLUG'               => array('energy'),
+            'SMART_PLUG'         => array('energy'),
+            // Sécurité
+            'ALARM_PANEL'        => array('security'),
+            'SIREN'              => array('security'),
+            'SOLAR_SIREN'        => array('security'),
+            'REMOTE'             => array('security'),
+            'KEYPAD'             => array('security'),
+            'MAGNETIC'           => array('security'),
+            'PIR_DETECTOR'       => array('security'),
+            'SMOKE'              => array('security'),
+            'WATER_LEAK'         => array('security'),
+            'CAMERA'             => array('security'),
+            'CAMERA_WIFI'        => array('security'),
+            // Température et chauffage
+            'TEMP_HUM'           => array('heating'),
+            'THERMOSTAT'         => array('heating'),
+            'TEMPERATURE_SENSOR' => array('heating'),
+            'HUMIDITY_SENSOR'    => array('heating'),
+            // Volets et ouvrants
+            'SHUTTER_COMMAND'    => array('opening'),
+            'SHUTTER_CONTROL'    => array('opening'),
+        );
+
+        if (isset($map[$type])) {
+            return $map[$type];
+        }
+
+        // Repli par famille pour les variantes non listées.
+        if (strpos($type, 'BULB') !== false || strpos($type, 'LIGHT') !== false
+            || strpos($type, 'LAMP') !== false || strpos($type, 'DIMMER') !== false) {
+            return array('light');
+        }
+        if (strpos($type, 'PLUG') !== false || strpos($type, 'SOCKET') !== false
+            || strpos($type, 'POWER') !== false || strpos($type, 'METER') !== false) {
+            return array('energy');
+        }
+        if (strpos($type, 'TEMP') !== false || strpos($type, 'THERMO') !== false
+            || strpos($type, 'HEAT') !== false || strpos($type, 'HUMID') !== false) {
+            return array('heating');
+        }
+        if (strpos($type, 'SHUTTER') !== false || strpos($type, 'BLIND') !== false
+            || strpos($type, 'CURTAIN') !== false || strpos($type, 'GARAGE') !== false
+            || strpos($type, 'GATE') !== false) {
+            return array('opening');
+        }
+        if (strpos($type, 'ALARM') !== false || strpos($type, 'SIREN') !== false
+            || strpos($type, 'DETECTOR') !== false || strpos($type, 'SENSOR') !== false
+            || strpos($type, 'SMOKE') !== false || strpos($type, 'MAGNETIC') !== false
+            || strpos($type, 'CONTACT') !== false || strpos($type, 'MOTION') !== false
+            || strpos($type, 'LEAK') !== false || strpos($type, 'CAMERA') !== false
+            || strpos($type, 'KEYPAD') !== false || strpos($type, 'REMOTE') !== false) {
+            return array('security');
+        }
+
+        return array('default');
+    }
+
+    /**
+     * Applique (et remplace) les catégories Jeedom d'un équipement.
+     */
+    private static function applyCategories($eqLogic, $deviceType) {
+        $wanted = self::getCategoriesForDevice($deviceType);
+        foreach (self::$jeedomCategories as $category) {
+            $eqLogic->setCategory($category, in_array($category, $wanted, true) ? 1 : 0);
+        }
+    }
+
+    /**
      * Crée ou met à jour les équipements Jeedom depuis le cache JSON.
      */
     public static function applyDevices() {
@@ -148,6 +246,7 @@ class sfrhome extends eqLogic {
                 continue;
             }
 
+            $deviceType = isset($device['deviceType']) ? $device['deviceType'] : '';
             $eqLogic = eqLogic::byLogicalId($device['id'], 'sfrhome');
             if (!is_object($eqLogic)) {
                 $eqLogic = new sfrhome();
@@ -156,17 +255,25 @@ class sfrhome extends eqLogic {
                 $eqLogic->setName($device['name']);
                 $eqLogic->setIsEnable(1);
                 $eqLogic->setIsVisible(1);
-                $eqLogic->setCategory('security', 1);
-                $eqLogic->setConfiguration('deviceType', $device['deviceType']);
+                self::applyCategories($eqLogic, $deviceType);
+                $eqLogic->setConfiguration('categoryVersion', self::CATEGORY_VERSION);
+                $eqLogic->setConfiguration('deviceType', $deviceType);
                 $eqLogic->setConfiguration('model', isset($device['model_type']) ? $device['model_type'] : '');
                 $eqLogic->save();
                 $eqLogic->createCmds($device);
-                log::add('sfrhome', 'info', __('Nouveau périphérique créé : ', __FILE__) . $device['name'] . ' (' . $device['deviceType'] . ')');
+                log::add('sfrhome', 'info', __('Nouveau périphérique créé : ', __FILE__) . $device['name'] . ' (' . $deviceType . ')');
             } else {
-                $changed = ($eqLogic->getConfiguration('deviceType') !== $device['deviceType'])
+                $typeChanged = ($eqLogic->getConfiguration('deviceType') !== $deviceType);
+                $categoryOutdated = intval($eqLogic->getConfiguration('categoryVersion', 0)) < self::CATEGORY_VERSION;
+                $changed = $typeChanged
+                    || $categoryOutdated
                     || ($eqLogic->getConfiguration('model') !== (isset($device['model_type']) ? $device['model_type'] : ''));
                 if ($changed) {
-                    $eqLogic->setConfiguration('deviceType', $device['deviceType']);
+                    if ($typeChanged || $categoryOutdated) {
+                        self::applyCategories($eqLogic, $deviceType);
+                        $eqLogic->setConfiguration('categoryVersion', self::CATEGORY_VERSION);
+                    }
+                    $eqLogic->setConfiguration('deviceType', $deviceType);
                     $eqLogic->setConfiguration('model', isset($device['model_type']) ? $device['model_type'] : '');
                     $eqLogic->save();
                 }
@@ -177,7 +284,6 @@ class sfrhome extends eqLogic {
     }
 
     public function preInsert() {
-        $this->setCategory('security', 1);
         $this->setIsEnable(1);
         $this->setIsVisible(1);
     }
@@ -219,30 +325,48 @@ class sfrhome extends eqLogic {
             $this->createActionCmd('On', 'on', 'action', 'other');
             $this->createActionCmd('Off', 'off', 'action', 'other');
             $this->createInfoCmd('Etat binaire', 'state', 'info', 'binary');
+            $this->setCmdGenericType('on', 'ENERGY_ON');
+            $this->setCmdGenericType('off', 'ENERGY_OFF');
+            $this->setCmdGenericType('state', 'ENERGY_STATE');
         } elseif ($deviceType == 'SHUTTER_COMMAND' || $deviceType == 'SHUTTER_CONTROL') {
             $this->createActionCmd('Ouvrir', 'on', 'action', 'other');
             $this->createActionCmd('Fermer', 'off', 'action', 'other');
+            $this->setCmdGenericType('on', 'FLAP_UP');
+            $this->setCmdGenericType('off', 'FLAP_DOWN');
         } elseif ($deviceType == 'ALARM_PANEL') {
             $this->createActionCmd('Désactiver', 'alarm_off', 'action', 'other');
             $this->createActionCmd('Activer (Absent)', 'alarm_on', 'action', 'other');
             $this->createActionCmd('Nuit', 'alarm_custom', 'action', 'other');
             $this->createInfoCmd('Mode alarme', 'alarm_mode', 'info', 'string');
+            $this->setCmdGenericType('alarm_off', 'ALARM_RELEASED');
+            $this->setCmdGenericType('alarm_on', 'ALARM_ARMED');
+            $this->setCmdGenericType('alarm_mode', 'ALARM_MODE');
         } elseif ($deviceType == 'TEMP_HUM') {
             $this->createInfoCmd('Température', 'temperature', 'info', 'numeric', '°C');
             $this->createInfoCmd('Humidité', 'humidity', 'info', 'numeric', '%');
+            $this->setCmdGenericType('temperature', 'TEMPERATURE');
+            $this->setCmdGenericType('humidity', 'HUMIDITY');
         } elseif ($deviceType == 'MAGNETIC') {
             $this->createInfoCmd('Contact', 'contact', 'info', 'binary');
+            $this->setCmdGenericType('contact', 'OPENING');
         } elseif ($deviceType == 'PIR_DETECTOR') {
             $this->createInfoCmd('Mouvement', 'motion', 'info', 'binary');
+            $this->setCmdGenericType('motion', 'PRESENCE');
         } elseif ($deviceType == 'SMOKE') {
             $this->createInfoCmd('Fumée', 'smoke', 'info', 'binary');
+            $this->setCmdGenericType('smoke', 'SMOKE');
         } elseif (in_array($deviceType, array('LED_BULB_DIMMER', 'LED_BULB_HUE', 'LED_BULB_COLOR'))) {
             $this->createActionCmd('On', 'on', 'action', 'other');
             $this->createActionCmd('Off', 'off', 'action', 'other');
             $this->createInfoCmd('Etat binaire', 'state', 'info', 'binary');
+            $this->setCmdGenericType('on', 'LIGHT_ON');
+            $this->setCmdGenericType('off', 'LIGHT_OFF');
+            $this->setCmdGenericType('state', 'LIGHT_STATE');
         } elseif ($deviceType == 'CAMERA_WIFI') {
             $this->createInfoCmd('Mouvement', 'motion', 'info', 'binary');
             $this->createInfoCmd('URL snapshot', 'snapshot_url', 'info', 'string');
+            $this->setCmdGenericType('motion', 'PRESENCE');
+            $this->setCmdGenericType('snapshot_url', 'CAMERA_URL');
         }
     }
 
@@ -329,6 +453,17 @@ class sfrhome extends eqLogic {
             $cmd->save();
         }
         return $cmd;
+    }
+
+    /**
+     * Associe un type générique Jeedom à une commande existante.
+     */
+    public function setCmdGenericType($logicalId, $genericType) {
+        $cmd = $this->getCmdByLogicalId($logicalId);
+        if (is_object($cmd) && $cmd->getGeneric_type() !== $genericType) {
+            $cmd->setGeneric_type($genericType);
+            $cmd->save();
+        }
     }
 
     public static function sync() {

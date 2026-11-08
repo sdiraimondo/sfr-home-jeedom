@@ -1,5 +1,13 @@
 # Changelog plugin SFR Home
 
+# 08/11/2026 - 0.2.2
+
+- Catégorisation automatique des équipements dans Jeedom selon leur type SFR
+  (lumières, prises, caméras, alarme, capteurs, volets…)
+- Migration automatique des équipements existants vers les bonnes catégories
+- Ajout des types génériques des commandes (`LIGHT_STATE`, `ENERGY_STATE`,
+  `TEMPERATURE`, `HUMIDITY`, `OPENING`, `PRESENCE`, etc.)
+
 # 08/11/2026 - 0.2.1
 
 - Correction de l'authentification : SFR a supprimé l'endpoint `sso-connector.php`

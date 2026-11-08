@@ -25,6 +25,22 @@ Les équipements sont ensuite créés automatiquement dans **Plugins → SFR Hom
 La synchronisation automatique tourne chaque minute et ne récupère les données
 SFR Home que si la fréquence de rafraîchissement configurée est écoulée.
 
+## Catégories
+
+Les équipements sont automatiquement classés dans les catégories Jeedom selon leur
+type SFR :
+
+- **Lumière** : ampoules connectées (LED, variateur, couleur)
+- **Énergie** : prises connectées
+- **Sécurité** : centrale d'alarme, sirènes, télécommandes, claviers, caméras,
+  détecteurs d'ouverture, de mouvement, de fumée et de fuite d'eau
+- **Chauffage** : capteurs de température/humidité et thermostats
+- **Ouvrant** : volets roulants
+- **Autre** : types non reconnus
+
+Les équipements existants sont recatégorisés automatiquement lors de la première
+synchronisation suivant la mise à jour.
+
 ## Authentification
 
 Le plugin utilise le formulaire de connexion de SFR Home (avec jeton CSRF),
