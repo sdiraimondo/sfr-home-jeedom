@@ -27,8 +27,9 @@ SFR Home que si la fréquence de rafraîchissement configurée est écoulée.
 
 ## Authentification
 
-Le plugin utilise le même système d'authentification SSO que l'application SFR Home,
-avec gestion et renouvellement automatique des cookies de session.
+Le plugin utilise le formulaire de connexion de SFR Home (avec jeton CSRF),
+avec gestion et renouvellement automatique des cookies de session. En cas de session
+expirée, une réauthentification est effectuée automatiquement.
 
 ## Dépannage
 

@@ -44,9 +44,10 @@ Chaque équipement est ensuite mis à jour avec les états frais de `/mysensors`
 
 ## Authentification
 
-Le plugin utilise le même système d'authentification SSO que l'application SFR Home,
+Le plugin utilise le formulaire de connexion de SFR Home (avec jeton CSRF),
 avec gestion et renouvellement automatique des cookies de session. En cas de session
-expirée, une réauthentification est effectuée automatiquement.
+expirée, une réauthentification est effectuée automatiquement. Les erreurs renvoyées
+par SFR (identifiant inconnu, mot de passe incorrect, etc.) sont affichées telles quelles.
 
 - Cookies par défaut : `/tmp/sfrhome_session_cookies.json`
 

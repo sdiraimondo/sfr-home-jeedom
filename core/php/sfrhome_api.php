@@ -15,7 +15,6 @@ $testOnly   = in_array('--test', $argv, true);
 
 const SFR_BASE_URL     = 'https://home.sfr.fr/';
 const SFR_LOGIN_URL    = 'https://home.sfr.fr/login';
-const SFR_SSO_URL      = 'https://home.sfr.fr/sso-connector.php';
 const SFR_MYSENSORS_URL = 'https://home.sfr.fr/mysensors';
 const USER_AGENT       = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
@@ -140,52 +139,64 @@ function resolveUrl($base, $relative) {
     $parts = parse_url($base);
     $scheme = isset($parts['scheme']) ? $parts['scheme'] : 'https';
     $host = isset($parts['host']) ? $parts['host'] : 'home.sfr.fr';
+    $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+    $origin = $scheme . '://' . $host . $port;
     if (substr($relative, 0, 1) === '/') {
-        return $scheme . '://' . $host . $relative;
+        return $origin . $relative;
     }
     $path = isset($parts['path']) ? $parts['path'] : '/';
     $dir = substr($path, 0, strrpos($path, '/') + 1);
-    return $scheme . '://' . $host . $dir . $relative;
+    return $origin . $dir . $relative;
+}
+
+function getRedirectLocation($headers) {
+    if (preg_match('/^Location:\s*(.+?)\s*$/mi', $headers, $matches)) {
+        return trim($matches[1]);
+    }
+    return '';
 }
 
 /**
- * Authentification SSO SFR Home.
+ * Suit les redirections en mettant à jour les cookies à chaque étape
+ * (curl ne gère pas de jar de cookies entre les redirections).
+ */
+function followRedirects(&$cookies, $url, $max = 5) {
+    $resp = null;
+    for ($i = 0; $i < $max; $i++) {
+        $resp = httpRequest($url, 'GET', null, $cookies, false);
+        $cookies = mergeCookies($cookies, extractCookies($resp['headers']));
+        if ($resp['code'] >= 300 && $resp['code'] < 400) {
+            $location = getRedirectLocation($resp['headers']);
+            if ($location === '') {
+                break;
+            }
+            $url = resolveUrl($url, $location);
+            continue;
+        }
+        break;
+    }
+    return $resp;
+}
+
+/**
+ * Authentification SFR Home (formulaire /login avec jeton CSRF).
  * Retourne la liste des cookies ou null en cas d'échec.
  */
 function authenticate($username, $password, $cookiePath) {
     $cookies = array();
 
-    // Étape 1 : POST SSO
-    $resp = httpRequest(SFR_SSO_URL, 'POST', array(
-        'connectionSFR' => $username,
-        'passSFR'       => $password,
-    ), $cookies, true, array(
-        'Origin: https://home.sfr.fr',
-        'Referer: ' . SFR_LOGIN_URL,
-    ));
-    if ($resp['code'] === 0) {
-        return array('cookies' => null, 'message' => 'Erreur réseau SSO : ' . $resp['error']);
-    }
-    $cookies = mergeCookies($cookies, extractCookies($resp['headers']));
-
-    $token = null;
-    $data = json_decode($resp['body'], true);
-    if (isset($data['result']['token_sso'])) {
-        $token = $data['result']['token_sso'];
-    }
-    if (!$token && isset($data['token_sso'])) {
-        $token = $data['token_sso'];
-    }
-    if (!$token) {
-        return array('cookies' => null, 'message' => 'Token SSO absent (identifiants invalides ou flux modifié)');
-    }
-
-    // Étape 2 : page de login
+    // Étape 1 : page de connexion (session + jeton CSRF)
     $resp = httpRequest(SFR_LOGIN_URL, 'GET', null, $cookies, true);
+    if ($resp['code'] === 0) {
+        return array('cookies' => null, 'message' => 'Erreur réseau lors du chargement de la page de connexion : ' . $resp['error']);
+    }
+    if ($resp['code'] !== 200) {
+        return array('cookies' => null, 'message' => 'Page de connexion inaccessible (HTTP ' . $resp['code'] . ')');
+    }
     $cookies = mergeCookies($cookies, extractCookies($resp['headers']));
     $loginPage = $resp['body'];
 
-    // Étape 3 : soumission du formulaire
+    // Étape 2 : extraction du formulaire de connexion
     $payload = array();
     $actionUrl = SFR_LOGIN_URL;
     $method = 'post';
@@ -194,9 +205,9 @@ function authenticate($username, $password, $cookiePath) {
         $dom = new DOMDocument();
         @$dom->loadHTML($loginPage);
         $xpath = new DOMXPath($dom);
-        $form = $xpath->query("//form[@id='login_form_add_rib']")->item(0);
+        $form = $xpath->query("//form[@id='loginForm']")->item(0);
         if (!$form) {
-            $form = $xpath->query("//form[@id='loginForm']")->item(0);
+            $form = $xpath->query("//form[@id='login_form_add_rib']")->item(0);
         }
         if ($form) {
             $action = $form->getAttribute('action');
@@ -223,44 +234,77 @@ function authenticate($username, $password, $cookiePath) {
         }
     }
 
+    // Repli sans DOMDocument : on récupère au minimum le jeton CSRF.
+    if (empty($payload) && preg_match('/name=["\']csrf_login["\'][^>]*value=["\']([^"\']*)["\']/i', $loginPage, $matches)) {
+        $payload['csrf_login'] = $matches[1];
+    }
+
     if (empty($payload)) {
         return array('cookies' => null, 'message' => 'Formulaire de login introuvable');
     }
 
-    $payload['token_sso'] = $token;
-    if (isset($payload['email']) && $payload['email'] === '') {
-        $payload['email'] = $username;
-    }
-    if (isset($payload['passwd']) && $payload['passwd'] === '') {
-        $payload['passwd'] = $password;
-    }
-    // Certaines versions utilisent connectionSFR/passSFR
-    if (isset($payload['connectionSFR']) && $payload['connectionSFR'] === '') {
+    // Les champs sont vides dans la page : on renseigne les identifiants.
+    $payload['email'] = $username;
+    $payload['passwd'] = $password;
+    // Compatibilité avec d'anciens formulaires.
+    if (array_key_exists('connectionSFR', $payload)) {
         $payload['connectionSFR'] = $username;
     }
-    if (isset($payload['passSFR']) && $payload['passSFR'] === '') {
+    if (array_key_exists('passSFR', $payload)) {
         $payload['passSFR'] = $password;
     }
+    unset($payload['token_sso']);
 
+    // Étape 3 : soumission du formulaire
     if ($method === 'get') {
         $url = $actionUrl . (strpos($actionUrl, '?') === false ? '?' : '&') . http_build_query($payload);
-        $resp = httpRequest($url, 'GET', null, $cookies, true);
+        $resp = httpRequest($url, 'GET', null, $cookies, false);
     } else {
         $actionParts = parse_url($actionUrl);
         $origin = (isset($actionParts['scheme']) ? $actionParts['scheme'] : 'https') . '://' . (isset($actionParts['host']) ? $actionParts['host'] : 'home.sfr.fr');
-        $resp = httpRequest($actionUrl, 'POST', $payload, $cookies, true, array(
+        $resp = httpRequest($actionUrl, 'POST', $payload, $cookies, false, array(
             'Origin: ' . $origin,
             'Referer: ' . SFR_LOGIN_URL,
         ));
     }
+
+    if ($resp['code'] === 0) {
+        return array('cookies' => null, 'message' => 'Erreur réseau lors de la connexion : ' . $resp['error']);
+    }
     $cookies = mergeCookies($cookies, extractCookies($resp['headers']));
 
-    // Étape 4 : dashboard
-    $resp = httpRequest(SFR_BASE_URL, 'GET', null, $cookies, true);
-    $cookies = mergeCookies($cookies, extractCookies($resp['headers']));
+    // Échec : SFR réaffiche le formulaire avec un message d'erreur.
+    if ($resp['code'] === 200 && (stripos($resp['body'], 'id="loginForm"') !== false || stripos($resp['body'], "id='loginForm'") !== false)) {
+        $message = 'Identifiants SFR refusés.';
+        if (preg_match('/id=["\']errorMessage["\'][^>]*>(.*?)<\/p>/is', $resp['body'], $matches)) {
+            $error = trim(html_entity_decode(strip_tags($matches[1]), ENT_QUOTES, 'UTF-8'));
+            if ($error !== '') {
+                $message = $error;
+            }
+        }
+        return array('cookies' => null, 'message' => $message);
+    }
+
+    if (!in_array($resp['code'], array(200, 301, 302, 303, 307, 308), true)) {
+        return array('cookies' => null, 'message' => 'Réponse inattendue de la page de connexion (HTTP ' . $resp['code'] . ')');
+    }
+
+    // Étape 4 : finalisation de la session (suivi des redirections avec cookies à jour)
+    $redirect = getRedirectLocation($resp['headers']);
+    if ($redirect !== '') {
+        $target = resolveUrl($actionUrl, $redirect);
+        followRedirects($cookies, $target);
+    }
+    $dashboard = followRedirects($cookies, SFR_BASE_URL);
+    if ($dashboard === null || $dashboard['code'] === 0) {
+        return array('cookies' => null, 'message' => 'Erreur réseau lors de l\'ouverture de la session');
+    }
+    if (stripos($dashboard['body'], 'id="loginForm"') !== false || stripos($dashboard['body'], "id='loginForm'") !== false) {
+        return array('cookies' => null, 'message' => 'Identifiants SFR refusés (session non établie).');
+    }
 
     saveCookies($cookiePath, $cookies);
-    return array('cookies' => $cookies, 'message' => 'Authentification SSO réussie');
+    return array('cookies' => $cookies, 'message' => 'Authentification réussie');
 }
 
 function fetchMysensors($cookies) {

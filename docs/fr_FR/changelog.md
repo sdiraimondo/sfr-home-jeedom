@@ -1,5 +1,12 @@
 # Changelog plugin SFR Home
 
+# 08/11/2026 - 0.2.1
+
+- Correction de l'authentification : SFR a supprimé l'endpoint `sso-connector.php`
+- Utilisation du nouveau formulaire `/login` avec jeton CSRF
+- Messages d'erreur SFR remontés tels quels (ex. « Utilisateur inconnu. »)
+- Gestion correcte des redirections avec mise à jour des cookies
+
 # 07/11/2026 - 0.2.0
 
 - Rafraîchissement automatique fiable des états (synchronisation globale selon la fréquence configurée)
